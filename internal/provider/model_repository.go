@@ -4,9 +4,11 @@ import (
 	"strconv"
 
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -20,6 +22,7 @@ type repositoryModel struct {
 	Name                       types.String `tfsdk:"name"`
 	Type                       types.String `tfsdk:"type"`
 	Project                    types.String `tfsdk:"project"`
+	UseAzureWorkloadIdentity   types.Bool   `tfsdk:"use_azure_workload_identity"`
 	Username                   types.String `tfsdk:"username"`
 	Password                   types.String `tfsdk:"password"`
 	SSHPrivateKey              types.String `tfsdk:"ssh_private_key"`
@@ -35,6 +38,9 @@ type repositoryModel struct {
 	GitHubAppEnterpriseBaseURL types.String `tfsdk:"githubapp_enterprise_base_url"`
 	GitHubAppPrivateKey        types.String `tfsdk:"githubapp_private_key"`
 	BearerToken                types.String `tfsdk:"bearer_token"`
+	Proxy                      types.String `tfsdk:"proxy"`
+	NoProxy                    types.String `tfsdk:"no_proxy"`
+	Depth                      types.Int64  `tfsdk:"depth"`
 }
 
 func repositorySchemaAttributes() map[string]schema.Attribute {
@@ -55,12 +61,12 @@ func repositorySchemaAttributes() map[string]schema.Attribute {
 			Optional:            true,
 		},
 		"type": schema.StringAttribute{
-			MarkdownDescription: "Type of the repo. Can be either `git` or `helm`. `git` is assumed if empty or absent.",
+			MarkdownDescription: "Type of the repo. Can be either `git`, `helm` or `oci`. `git` is assumed if empty or absent.",
 			Optional:            true,
 			Computed:            true,
 			Default:             stringdefault.StaticString("git"),
 			Validators: []validator.String{
-				stringvalidator.OneOf("git", "helm"),
+				stringvalidator.OneOf("git", "helm", "oci"),
 			},
 		},
 		"project": schema.StringAttribute{
@@ -69,6 +75,12 @@ func repositorySchemaAttributes() map[string]schema.Attribute {
 			PlanModifiers: []planmodifier.String{
 				stringplanmodifier.RequiresReplace(),
 			},
+		},
+		"use_azure_workload_identity": schema.BoolAttribute{
+			MarkdownDescription: "Whether `Azure-Workload-identity` should be enabled for this repository.",
+			Optional:            true,
+			Computed:            true,
+			Default:             booldefault.StaticBool(false),
 		},
 		"username": schema.StringAttribute{
 			MarkdownDescription: "Username used for authenticating at the remote repository.",
@@ -144,6 +156,23 @@ func repositorySchemaAttributes() map[string]schema.Attribute {
 			Optional:            true,
 			Sensitive:           true,
 		},
+		"proxy": schema.StringAttribute{
+			MarkdownDescription: "HTTP/HTTPS proxy to access the repository.",
+			Optional:            true,
+		},
+		"no_proxy": schema.StringAttribute{
+			MarkdownDescription: "Comma-separated list of hostnames that should be excluded from proxying.",
+			Optional:            true,
+		},
+		"depth": schema.Int64Attribute{
+			MarkdownDescription: "Depth specifies the depth for [shallow clones](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/#shallow-clone). A value of `0` means a full clone (the default). Shallow clone depths (`> 0`) are only supported from ArgoCD 3.3.0 onwards.",
+			Optional:            true,
+			Computed:            true,
+			Default:             int64default.StaticInt64(0),
+			Validators: []validator.Int64{
+				int64validator.AtLeast(0),
+			},
+		},
 	}
 }
 
@@ -153,6 +182,7 @@ func (m *repositoryModel) toAPIModel() (*v1alpha1.Repository, error) {
 		Name:                       m.Name.ValueString(),
 		Type:                       m.Type.ValueString(),
 		Project:                    m.Project.ValueString(),
+		UseAzureWorkloadIdentity:   m.UseAzureWorkloadIdentity.ValueBool(),
 		Username:                   m.Username.ValueString(),
 		Password:                   m.Password.ValueString(),
 		BearerToken:                m.BearerToken.ValueString(),
@@ -165,6 +195,9 @@ func (m *repositoryModel) toAPIModel() (*v1alpha1.Repository, error) {
 		InheritedCreds:             m.InheritedCreds.ValueBool(),
 		GitHubAppEnterpriseBaseURL: m.GitHubAppEnterpriseBaseURL.ValueString(),
 		GithubAppPrivateKey:        m.GitHubAppPrivateKey.ValueString(),
+		Proxy:                      m.Proxy.ValueString(),
+		NoProxy:                    m.NoProxy.ValueString(),
+		Depth:                      m.Depth.ValueInt64(),
 	}
 
 	// Handle GitHub App ID conversion
@@ -200,10 +233,17 @@ func (m *repositoryModel) updateFromAPI(repo *v1alpha1.Repository) *repositoryMo
 
 	m.Repo = types.StringValue(repo.Repo)
 	m.Type = types.StringValue(repo.Type)
+	m.UseAzureWorkloadIdentity = types.BoolValue(repo.UseAzureWorkloadIdentity)
 	m.EnableLFS = types.BoolValue(repo.EnableLFS)
 	m.EnableOCI = types.BoolValue(repo.EnableOCI)
 	m.Insecure = types.BoolValue(repo.Insecure)
 	m.InheritedCreds = types.BoolValue(repo.InheritedCreds)
+
+	if repo.Depth > 0 {
+		m.Depth = types.Int64Value(repo.Depth)
+	} else if m.Depth.IsUnknown() || m.Depth.IsNull() {
+		m.Depth = types.Int64Value(0)
+	}
 
 	if repo.Name != "" {
 		m.Name = types.StringValue(repo.Name)
@@ -245,6 +285,19 @@ func (m *repositoryModel) updateFromAPI(repo *v1alpha1.Repository) *repositoryMo
 	} else if m.GitHubAppInstallationID.IsUnknown() {
 		// If unknown and API didn't return a value, set to null
 		m.GitHubAppInstallationID = types.StringNull()
+	}
+
+	// Handle proxy settings
+	if repo.Proxy != "" {
+		m.Proxy = types.StringValue(repo.Proxy)
+	} else if m.Proxy.IsUnknown() {
+		m.Proxy = types.StringNull()
+	}
+
+	if repo.NoProxy != "" {
+		m.NoProxy = types.StringValue(repo.NoProxy)
+	} else if m.NoProxy.IsUnknown() {
+		m.NoProxy = types.StringNull()
 	}
 
 	return m

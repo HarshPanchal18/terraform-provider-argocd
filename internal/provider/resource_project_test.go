@@ -318,6 +318,31 @@ func TestAccArgoCDProjectWithFineGrainedPolicy(t *testing.T) {
 	})
 }
 
+func TestAccArgoCDProjectWithAppsInAnyNSPolicy(t *testing.T) {
+	name := acctest.RandomWithPrefix("test-acc")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t); testAccPreCheckFeatureSupported(t, features.ProjectFineGrainedPolicy) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccArgoCDProjectWithAppsInAnyNSPolicy(name),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet(
+						"argocd_project.app_in_any_ns_policy",
+						"metadata.0.uid",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_project.app_in_any_ns_policy",
+						"spec.0.role.0.policies.#",
+						"2",
+					),
+				),
+			},
+		},
+	})
+}
+
 func testAccArgoCDProjectSimple(name string) string {
 	return fmt.Sprintf(`
 resource "argocd_project" "simple" {
@@ -393,6 +418,7 @@ resource "argocd_project" "simple" {
       duration = "3600s"
       schedule = "10 1 * * *"
       manual_sync = true
+	  use_and_operator = false
     }
     sync_window {
       kind = "deny"
@@ -403,6 +429,7 @@ resource "argocd_project" "simple" {
       schedule = "22 1 5 * *"
       manual_sync = false
       timezone = "Europe/London"
+	  use_and_operator = false
     }
     signature_keys = [
       "4AEE18F83AFDEB23",
@@ -1155,8 +1182,9 @@ resource "argocd_project" "sync_windows_consistency" {
       manual_sync = true
     }
     sync_window {
+      use_and_operator = true
       kind = "deny"
-      applications = ["foo"]
+      applications = ["foo", "bar"]
       clusters = ["in-cluster"]
       namespaces = ["default"]
       duration = "12h"
@@ -1192,6 +1220,11 @@ resource "argocd_project" "sync_windows_consistency" {
 					),
 					resource.TestCheckResourceAttr(
 						"argocd_project.sync_windows_consistency",
+						"spec.0.sync_window.1.use_and_operator",
+						"true",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_project.sync_windows_consistency",
 						"spec.0.sync_window.1.timezone",
 						"Europe/London",
 					),
@@ -1214,6 +1247,11 @@ resource "argocd_project" "sync_windows_consistency" {
 					resource.TestCheckResourceAttr(
 						"argocd_project.sync_windows_consistency",
 						"spec.0.sync_window.0.manual_sync",
+						"true",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_project.sync_windows_consistency",
+						"spec.0.sync_window.1.use_and_operator",
 						"true",
 					),
 					resource.TestCheckResourceAttr(
@@ -1337,6 +1375,38 @@ func testAccArgoCDProjectWithFineGrainedPolicy(name string) string {
         policies = [
           "p, proj:%[1]s:fine-grained, applications, update/*, %[1]s/*, allow",
           "p, proj:%[1]s:fine-grained, applications, delete/*/Pod/*/*, %[1]s/*, allow",
+        ]
+      }
+    }
+  }
+	`, name)
+}
+
+func testAccArgoCDProjectWithAppsInAnyNSPolicy(name string) string {
+	return fmt.Sprintf(`
+  resource "argocd_project" "app_in_any_ns_policy" {
+    metadata {
+      name      = "%[1]s"
+      namespace = "argocd"
+      labels = {
+        acceptance = "true"
+      }
+    }
+
+    spec {
+      description  = "simple project with multi-ns policy"
+      source_repos = ["*"]
+
+      destination {
+        server    = "https://kubernetes.default.svc"
+        namespace = "default"
+      }
+
+      role {
+        name = "multi-ns"
+        policies = [
+          "p, proj:%[1]s:multi-ns, applications, update/*, %[1]s/*/multi-ns, allow",
+          "p, proj:%[1]s:multi-ns, applications, delete/*/Pod/default/*, %[1]s/*, allow",
         ]
       }
     }
@@ -1733,4 +1803,342 @@ resource "argocd_project" "comprehensive" {
   }
 }
 	`, name, name, name)
+}
+
+// TestAccArgoCDProject_MetadataComputedFieldsOnUpdate tests that computed metadata fields
+// (resource_version, generation, uid) don't cause "inconsistent state after apply" errors
+// when the spec is updated with lifecycle { ignore_changes = [metadata] }.
+// This is a regression test for issue #807.
+// See: https://github.com/argoproj-labs/terraform-provider-argocd/issues/807
+func TestAccArgoCDProject_MetadataComputedFieldsOnUpdate(t *testing.T) {
+	name := acctest.RandString(10)
+
+	// Initial configuration with lifecycle ignore_changes on metadata
+	// This replicates the exact scenario from issue #807
+	configInitial := fmt.Sprintf(`
+resource "argocd_project" "metadata_computed" {
+  metadata {
+    name      = "%s"
+    namespace = "argocd"
+    labels = {
+      "test" = "initial"
+    }
+  }
+
+  spec {
+    description  = "initial description"
+    source_repos = ["*"]
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "default"
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [metadata]
+  }
+}
+`, name)
+
+	// Updated configuration - changes the spec but keeps metadata the same
+	// With ignore_changes = [metadata], this should trigger resource_version
+	// and generation changes without causing "inconsistent state after apply" errors
+	configUpdated := fmt.Sprintf(`
+resource "argocd_project" "metadata_computed" {
+  metadata {
+    name      = "%s"
+    namespace = "argocd"
+    labels = {
+      "test" = "initial"
+    }
+  }
+
+  spec {
+    description  = "updated description"
+    source_repos = ["*", "https://github.com/example/repo"]
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "default"
+    }
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "test"
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [metadata]
+  }
+}
+`, name)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: configInitial,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(
+						"argocd_project.metadata_computed",
+						"metadata.0.name",
+						name,
+					),
+					resource.TestCheckResourceAttrSet(
+						"argocd_project.metadata_computed",
+						"metadata.0.resource_version",
+					),
+					resource.TestCheckResourceAttrSet(
+						"argocd_project.metadata_computed",
+						"metadata.0.generation",
+					),
+					resource.TestCheckResourceAttrSet(
+						"argocd_project.metadata_computed",
+						"metadata.0.uid",
+					),
+				),
+			},
+			{
+				// Update the spec - this should not cause inconsistent state errors
+				// even though resource_version and generation will change
+				Config: configUpdated,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(
+						"argocd_project.metadata_computed",
+						"spec.0.description",
+						"updated description",
+					),
+					resource.TestCheckResourceAttrSet(
+						"argocd_project.metadata_computed",
+						"metadata.0.resource_version",
+					),
+					resource.TestCheckResourceAttrSet(
+						"argocd_project.metadata_computed",
+						"metadata.0.generation",
+					),
+				),
+			},
+			{
+				// Apply the same configuration again to ensure no drift
+				Config: configUpdated,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+// TestAccArgoCDProject_MultipleSpecUpdates tests that multiple sequential spec updates
+// don't cause inconsistent state errors due to rapidly changing resource_version/generation.
+// This is a stress test for issue #807.
+func TestAccArgoCDProject_MultipleSpecUpdates(t *testing.T) {
+	name := acctest.RandString(10)
+
+	configs := []string{
+		// Config 1: Initial
+		fmt.Sprintf(`
+resource "argocd_project" "multi_update" {
+  metadata {
+    name      = "%s"
+    namespace = "argocd"
+  }
+
+  spec {
+    description  = "version 1"
+    source_repos = ["*"]
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "default"
+    }
+  }
+}
+`, name),
+		// Config 2: Update description
+		fmt.Sprintf(`
+resource "argocd_project" "multi_update" {
+  metadata {
+    name      = "%s"
+    namespace = "argocd"
+  }
+
+  spec {
+    description  = "version 2"
+    source_repos = ["*"]
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "default"
+    }
+  }
+}
+`, name),
+		// Config 3: Add destination
+		fmt.Sprintf(`
+resource "argocd_project" "multi_update" {
+  metadata {
+    name      = "%s"
+    namespace = "argocd"
+  }
+
+  spec {
+    description  = "version 3"
+    source_repos = ["*"]
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "default"
+    }
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "kube-system"
+    }
+  }
+}
+`, name),
+		// Config 4: Add role
+		fmt.Sprintf(`
+resource "argocd_project" "multi_update" {
+  metadata {
+    name      = "%s"
+    namespace = "argocd"
+  }
+
+  spec {
+    description  = "version 4"
+    source_repos = ["*"]
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "default"
+    }
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "kube-system"
+    }
+
+    role {
+      name     = "test-role"
+      policies = ["p, proj:%[1]s:test-role, applications, get, %[1]s/*, allow"]
+    }
+  }
+}
+`, name),
+	}
+
+	steps := make([]resource.TestStep, len(configs))
+	for i, config := range configs {
+		steps[i] = resource.TestStep{
+			Config: config,
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr(
+					"argocd_project.multi_update",
+					"spec.0.description",
+					fmt.Sprintf("version %d", i+1),
+				),
+				resource.TestCheckResourceAttrSet(
+					"argocd_project.multi_update",
+					"metadata.0.resource_version",
+				),
+				resource.TestCheckResourceAttrSet(
+					"argocd_project.multi_update",
+					"metadata.0.generation",
+				),
+			),
+		}
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps:                    steps,
+	})
+}
+
+// TestAccArgoCDProject_UnknownAnnotationValues tests that argocd_project handles unknown
+// (computed) annotation and label values at plan time without crashing.
+// This is a regression test for issue #846.
+// See: https://github.com/argoproj-labs/terraform-provider-argocd/issues/846
+func TestAccArgoCDProject_UnknownAnnotationValues(t *testing.T) {
+	name := acctest.RandomWithPrefix("test-acc")
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// First step: terraform_data.test is new so its output is unknown at plan time.
+				// The argocd_project annotation references this unknown value.
+				// Before the fix, this would crash with "Value Conversion Error".
+				Config: testAccArgoCDProjectWithUnknownAnnotation(name, "initial"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(
+						"argocd_project.unknown_annotation",
+						"metadata.0.annotations.computed-key",
+						"initial",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_project.unknown_annotation",
+						"metadata.0.labels.computed-label",
+						"initial",
+					),
+				),
+			},
+			{
+				// Second step: changing the input makes the output unknown again at plan time.
+				Config: testAccArgoCDProjectWithUnknownAnnotation(name, "updated"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(
+						"argocd_project.unknown_annotation",
+						"metadata.0.annotations.computed-key",
+						"updated",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_project.unknown_annotation",
+						"metadata.0.labels.computed-label",
+						"updated",
+					),
+				),
+			},
+		},
+	})
+}
+
+func testAccArgoCDProjectWithUnknownAnnotation(name, value string) string {
+	return fmt.Sprintf(`
+resource "terraform_data" "test" {
+  input = "%s"
+}
+
+resource "argocd_project" "unknown_annotation" {
+  metadata {
+    name      = "%s"
+    namespace = "argocd"
+    annotations = {
+      "computed-key" = terraform_data.test.output
+    }
+    labels = {
+      "computed-label" = terraform_data.test.output
+    }
+  }
+
+  spec {
+    description  = "test unknown annotation values"
+    source_repos = ["*"]
+
+    destination {
+      server    = "https://kubernetes.default.svc"
+      namespace = "default"
+    }
+  }
+}
+	`, value, name)
 }

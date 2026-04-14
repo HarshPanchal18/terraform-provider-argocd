@@ -216,6 +216,50 @@ resource "argocd_application_set" "list" {
   }
 }
 
+# List Generator with elements_yaml
+resource "argocd_application_set" "list_elements_yaml" {
+  metadata {
+    name = "list-elements-yaml"
+  }
+
+  spec {
+    generator {
+      list {
+        elements_yaml = <<-EOT
+          - cluster: engineering-dev
+            url: https://kubernetes.default.svc
+            environment: development
+          - cluster: engineering-prod
+            url: https://kubernetes.default.svc
+            environment: production
+            foo: bar
+        EOT
+      }
+    }
+
+    template {
+      metadata {
+        name = "{{cluster}}-guestbook"
+      }
+
+      spec {
+        project = "my-project"
+
+        source {
+          repo_url        = "https://github.com/argoproj/argo-cd.git"
+          target_revision = "HEAD"
+          path            = "applicationset/examples/list-generator/guestbook/{{cluster}}"
+        }
+
+        destination {
+          server    = "{{url}}"
+          namespace = "guestbook"
+        }
+      }
+    }
+  }
+}
+
 # Matrix Generator
 resource "argocd_application_set" "matrix" {
   metadata {
@@ -378,6 +422,60 @@ resource "argocd_application_set" "pr_github" {
           labels = [
             "preview"
           ]
+        }
+      }
+    }
+
+    template {
+      metadata {
+        name = "myapp-{{branch}}-{{number}}"
+      }
+
+      spec {
+        project = "default"
+
+        source {
+          repo_url        = "https://github.com/myorg/myrepo.git"
+          path            = "kubernetes/"
+          target_revision = "{{head_sha}}"
+
+          helm {
+            parameter {
+              name  = "image.tag"
+              value = "pull-{{head_sha}}"
+            }
+          }
+        }
+
+        destination {
+          server    = "https://kubernetes.default.svc"
+          namespace = "default"
+        }
+      }
+    }
+  }
+}
+
+# Pull Request Generator - Azure DevOps
+resource "argocd_application_set" "pr_azure_devops" {
+  metadata {
+    name = "pr-azure-devops"
+  }
+
+  spec {
+    generator {
+      pull_request {
+        azure_devops {
+          api          = "https://dev.azure.com"
+          organization = "myorg"
+          project      = "myproject"
+          repo         = "myrepository"
+          labels       = ["preview"]
+
+          token_ref {
+            secret_name = "azure-devops-token"
+            key         = "token"
+          }
         }
       }
     }
@@ -1539,12 +1637,10 @@ Optional:
 <a id="nestedblock--spec--generator--list"></a>
 ### Nested Schema for `spec.generator.list`
 
-Required:
-
-- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
-
 Optional:
 
+- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
+- `elements_yaml` (String) YAML string containing list of key/value pairs to pass as parameters into the template
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--list--template))
 
 <a id="nestedblock--spec--generator--list--template"></a>
@@ -2765,12 +2861,10 @@ Optional:
 <a id="nestedblock--spec--generator--matrix--generator--list"></a>
 ### Nested Schema for `spec.generator.matrix.generator.list`
 
-Required:
-
-- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
-
 Optional:
 
+- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
+- `elements_yaml` (String) YAML string containing list of key/value pairs to pass as parameters into the template
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--list--template))
 
 <a id="nestedblock--spec--generator--matrix--generator--list--template"></a>
@@ -3989,12 +4083,10 @@ Optional:
 <a id="nestedblock--spec--generator--matrix--generator--matrix--generator--list"></a>
 ### Nested Schema for `spec.generator.matrix.generator.matrix.generator.list`
 
-Required:
-
-- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
-
 Optional:
 
+- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
+- `elements_yaml` (String) YAML string containing list of key/value pairs to pass as parameters into the template
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--list--template))
 
 <a id="nestedblock--spec--generator--matrix--generator--matrix--generator--list--template"></a>
@@ -4568,6 +4660,7 @@ Optional:
 
 Optional:
 
+- `azure_devops` (Block List, Max: 1) Fetch pull requests from an Azure DevOps repository. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--azure_devops))
 - `bitbucket_server` (Block List, Max: 1) Fetch pull requests from a repo hosted on a Bitbucket Server. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--bitbucket_server))
 - `filter` (Block List) Filters allow selecting which pull requests to generate for. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--filter))
 - `gitea` (Block List, Max: 1) Specify the repository from which to fetch the Gitea Pull requests. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--gitea))
@@ -4575,6 +4668,31 @@ Optional:
 - `gitlab` (Block List, Max: 1) Specify the project from which to fetch the GitLab merge requests. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--gitlab))
 - `requeue_after_seconds` (String) How often to check for changes (in seconds). Default: 30min.
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--template))
+
+<a id="nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--azure_devops"></a>
+### Nested Schema for `spec.generator.matrix.generator.matrix.generator.pull_request.azure_devops`
+
+Required:
+
+- `organization` (String) Azure DevOps org to scan. Required.
+- `project` (String) Azure DevOps project name to scan. Required.
+- `repo` (String) Azure DevOps repo name to scan. Required.
+
+Optional:
+
+- `api` (String) The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.
+- `labels` (List of String) Labels is used to filter the PRs that you want to target.
+- `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--azure_devops--token_ref))
+
+<a id="nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--azure_devops--token_ref"></a>
+### Nested Schema for `spec.generator.matrix.generator.matrix.generator.pull_request.azure_devops.token_ref`
+
+Required:
+
+- `key` (String) Key containing information in Kubernetes `Secret`.
+- `secret_name` (String) Name of Kubernetes `Secret`.
+
+
 
 <a id="nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--bitbucket_server"></a>
 ### Nested Schema for `spec.generator.matrix.generator.matrix.generator.pull_request.bitbucket_server`
@@ -4675,9 +4793,20 @@ Required:
 Optional:
 
 - `api` (String) The GitLab API URL to talk to. If blank, uses https://gitlab.com/.
+- `ca_ref` (Block List, Max: 1) Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--gitlab--ca_ref))
+- `insecure` (Boolean) A flag for checking the validity of the SCM's certificates.
 - `labels` (List of String) Labels is used to filter the PRs that you want to target.
 - `pull_request_state` (String) additional MRs filter to get only those with a certain state. Default:  "" (all states).
 - `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--gitlab--token_ref))
+
+<a id="nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--gitlab--ca_ref"></a>
+### Nested Schema for `spec.generator.matrix.generator.matrix.generator.pull_request.gitlab.ca_ref`
+
+Required:
+
+- `config_map_name` (String) Name of the ConfigMap.
+- `key` (String) Key containing information in trusted CA certs.
+
 
 <a id="nestedblock--spec--generator--matrix--generator--matrix--generator--pull_request--gitlab--token_ref"></a>
 ### Nested Schema for `spec.generator.matrix.generator.matrix.generator.pull_request.gitlab.token_ref`
@@ -6649,12 +6778,10 @@ Optional:
 <a id="nestedblock--spec--generator--matrix--generator--merge--generator--list"></a>
 ### Nested Schema for `spec.generator.matrix.generator.merge.generator.list`
 
-Required:
-
-- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
-
 Optional:
 
+- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
+- `elements_yaml` (String) YAML string containing list of key/value pairs to pass as parameters into the template
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--list--template))
 
 <a id="nestedblock--spec--generator--matrix--generator--merge--generator--list--template"></a>
@@ -7228,6 +7355,7 @@ Optional:
 
 Optional:
 
+- `azure_devops` (Block List, Max: 1) Fetch pull requests from an Azure DevOps repository. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--azure_devops))
 - `bitbucket_server` (Block List, Max: 1) Fetch pull requests from a repo hosted on a Bitbucket Server. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--bitbucket_server))
 - `filter` (Block List) Filters allow selecting which pull requests to generate for. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--filter))
 - `gitea` (Block List, Max: 1) Specify the repository from which to fetch the Gitea Pull requests. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--gitea))
@@ -7235,6 +7363,31 @@ Optional:
 - `gitlab` (Block List, Max: 1) Specify the project from which to fetch the GitLab merge requests. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--gitlab))
 - `requeue_after_seconds` (String) How often to check for changes (in seconds). Default: 30min.
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--template))
+
+<a id="nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--azure_devops"></a>
+### Nested Schema for `spec.generator.matrix.generator.merge.generator.pull_request.azure_devops`
+
+Required:
+
+- `organization` (String) Azure DevOps org to scan. Required.
+- `project` (String) Azure DevOps project name to scan. Required.
+- `repo` (String) Azure DevOps repo name to scan. Required.
+
+Optional:
+
+- `api` (String) The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.
+- `labels` (List of String) Labels is used to filter the PRs that you want to target.
+- `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--azure_devops--token_ref))
+
+<a id="nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--azure_devops--token_ref"></a>
+### Nested Schema for `spec.generator.matrix.generator.merge.generator.pull_request.azure_devops.token_ref`
+
+Required:
+
+- `key` (String) Key containing information in Kubernetes `Secret`.
+- `secret_name` (String) Name of Kubernetes `Secret`.
+
+
 
 <a id="nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--bitbucket_server"></a>
 ### Nested Schema for `spec.generator.matrix.generator.merge.generator.pull_request.bitbucket_server`
@@ -7335,9 +7488,20 @@ Required:
 Optional:
 
 - `api` (String) The GitLab API URL to talk to. If blank, uses https://gitlab.com/.
+- `ca_ref` (Block List, Max: 1) Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--gitlab--ca_ref))
+- `insecure` (Boolean) A flag for checking the validity of the SCM's certificates.
 - `labels` (List of String) Labels is used to filter the PRs that you want to target.
 - `pull_request_state` (String) additional MRs filter to get only those with a certain state. Default:  "" (all states).
 - `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--gitlab--token_ref))
+
+<a id="nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--gitlab--ca_ref"></a>
+### Nested Schema for `spec.generator.matrix.generator.merge.generator.pull_request.gitlab.ca_ref`
+
+Required:
+
+- `config_map_name` (String) Name of the ConfigMap.
+- `key` (String) Key containing information in trusted CA certs.
+
 
 <a id="nestedblock--spec--generator--matrix--generator--merge--generator--pull_request--gitlab--token_ref"></a>
 ### Nested Schema for `spec.generator.matrix.generator.merge.generator.pull_request.gitlab.token_ref`
@@ -8663,6 +8827,7 @@ Optional:
 
 Optional:
 
+- `azure_devops` (Block List, Max: 1) Fetch pull requests from an Azure DevOps repository. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--azure_devops))
 - `bitbucket_server` (Block List, Max: 1) Fetch pull requests from a repo hosted on a Bitbucket Server. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--bitbucket_server))
 - `filter` (Block List) Filters allow selecting which pull requests to generate for. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--filter))
 - `gitea` (Block List, Max: 1) Specify the repository from which to fetch the Gitea Pull requests. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--gitea))
@@ -8670,6 +8835,31 @@ Optional:
 - `gitlab` (Block List, Max: 1) Specify the project from which to fetch the GitLab merge requests. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--gitlab))
 - `requeue_after_seconds` (String) How often to check for changes (in seconds). Default: 30min.
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--template))
+
+<a id="nestedblock--spec--generator--matrix--generator--pull_request--azure_devops"></a>
+### Nested Schema for `spec.generator.matrix.generator.pull_request.azure_devops`
+
+Required:
+
+- `organization` (String) Azure DevOps org to scan. Required.
+- `project` (String) Azure DevOps project name to scan. Required.
+- `repo` (String) Azure DevOps repo name to scan. Required.
+
+Optional:
+
+- `api` (String) The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.
+- `labels` (List of String) Labels is used to filter the PRs that you want to target.
+- `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--azure_devops--token_ref))
+
+<a id="nestedblock--spec--generator--matrix--generator--pull_request--azure_devops--token_ref"></a>
+### Nested Schema for `spec.generator.matrix.generator.pull_request.azure_devops.token_ref`
+
+Required:
+
+- `key` (String) Key containing information in Kubernetes `Secret`.
+- `secret_name` (String) Name of Kubernetes `Secret`.
+
+
 
 <a id="nestedblock--spec--generator--matrix--generator--pull_request--bitbucket_server"></a>
 ### Nested Schema for `spec.generator.matrix.generator.pull_request.bitbucket_server`
@@ -8770,9 +8960,20 @@ Required:
 Optional:
 
 - `api` (String) The GitLab API URL to talk to. If blank, uses https://gitlab.com/.
+- `ca_ref` (Block List, Max: 1) Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--gitlab--ca_ref))
+- `insecure` (Boolean) A flag for checking the validity of the SCM's certificates.
 - `labels` (List of String) Labels is used to filter the PRs that you want to target.
 - `pull_request_state` (String) additional MRs filter to get only those with a certain state. Default:  "" (all states).
 - `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--matrix--generator--pull_request--gitlab--token_ref))
+
+<a id="nestedblock--spec--generator--matrix--generator--pull_request--gitlab--ca_ref"></a>
+### Nested Schema for `spec.generator.matrix.generator.pull_request.gitlab.ca_ref`
+
+Required:
+
+- `config_map_name` (String) Name of the ConfigMap.
+- `key` (String) Key containing information in trusted CA certs.
+
 
 <a id="nestedblock--spec--generator--matrix--generator--pull_request--gitlab--token_ref"></a>
 ### Nested Schema for `spec.generator.matrix.generator.pull_request.gitlab.token_ref`
@@ -10746,12 +10947,10 @@ Optional:
 <a id="nestedblock--spec--generator--merge--generator--list"></a>
 ### Nested Schema for `spec.generator.merge.generator.list`
 
-Required:
-
-- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
-
 Optional:
 
+- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
+- `elements_yaml` (String) YAML string containing list of key/value pairs to pass as parameters into the template
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--list--template))
 
 <a id="nestedblock--spec--generator--merge--generator--list--template"></a>
@@ -11970,12 +12169,10 @@ Optional:
 <a id="nestedblock--spec--generator--merge--generator--matrix--generator--list"></a>
 ### Nested Schema for `spec.generator.merge.generator.matrix.generator.list`
 
-Required:
-
-- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
-
 Optional:
 
+- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
+- `elements_yaml` (String) YAML string containing list of key/value pairs to pass as parameters into the template
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--list--template))
 
 <a id="nestedblock--spec--generator--merge--generator--matrix--generator--list--template"></a>
@@ -12549,6 +12746,7 @@ Optional:
 
 Optional:
 
+- `azure_devops` (Block List, Max: 1) Fetch pull requests from an Azure DevOps repository. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--azure_devops))
 - `bitbucket_server` (Block List, Max: 1) Fetch pull requests from a repo hosted on a Bitbucket Server. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--bitbucket_server))
 - `filter` (Block List) Filters allow selecting which pull requests to generate for. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--filter))
 - `gitea` (Block List, Max: 1) Specify the repository from which to fetch the Gitea Pull requests. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--gitea))
@@ -12556,6 +12754,31 @@ Optional:
 - `gitlab` (Block List, Max: 1) Specify the project from which to fetch the GitLab merge requests. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--gitlab))
 - `requeue_after_seconds` (String) How often to check for changes (in seconds). Default: 30min.
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--template))
+
+<a id="nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--azure_devops"></a>
+### Nested Schema for `spec.generator.merge.generator.matrix.generator.pull_request.azure_devops`
+
+Required:
+
+- `organization` (String) Azure DevOps org to scan. Required.
+- `project` (String) Azure DevOps project name to scan. Required.
+- `repo` (String) Azure DevOps repo name to scan. Required.
+
+Optional:
+
+- `api` (String) The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.
+- `labels` (List of String) Labels is used to filter the PRs that you want to target.
+- `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--azure_devops--token_ref))
+
+<a id="nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--azure_devops--token_ref"></a>
+### Nested Schema for `spec.generator.merge.generator.matrix.generator.pull_request.azure_devops.token_ref`
+
+Required:
+
+- `key` (String) Key containing information in Kubernetes `Secret`.
+- `secret_name` (String) Name of Kubernetes `Secret`.
+
+
 
 <a id="nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--bitbucket_server"></a>
 ### Nested Schema for `spec.generator.merge.generator.matrix.generator.pull_request.bitbucket_server`
@@ -12656,9 +12879,20 @@ Required:
 Optional:
 
 - `api` (String) The GitLab API URL to talk to. If blank, uses https://gitlab.com/.
+- `ca_ref` (Block List, Max: 1) Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--gitlab--ca_ref))
+- `insecure` (Boolean) A flag for checking the validity of the SCM's certificates.
 - `labels` (List of String) Labels is used to filter the PRs that you want to target.
 - `pull_request_state` (String) additional MRs filter to get only those with a certain state. Default:  "" (all states).
 - `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--gitlab--token_ref))
+
+<a id="nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--gitlab--ca_ref"></a>
+### Nested Schema for `spec.generator.merge.generator.matrix.generator.pull_request.gitlab.ca_ref`
+
+Required:
+
+- `config_map_name` (String) Name of the ConfigMap.
+- `key` (String) Key containing information in trusted CA certs.
+
 
 <a id="nestedblock--spec--generator--merge--generator--matrix--generator--pull_request--gitlab--token_ref"></a>
 ### Nested Schema for `spec.generator.merge.generator.matrix.generator.pull_request.gitlab.token_ref`
@@ -14630,12 +14864,10 @@ Optional:
 <a id="nestedblock--spec--generator--merge--generator--merge--generator--list"></a>
 ### Nested Schema for `spec.generator.merge.generator.merge.generator.list`
 
-Required:
-
-- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
-
 Optional:
 
+- `elements` (List of Map of String) List of key/value pairs to pass as parameters into the template
+- `elements_yaml` (String) YAML string containing list of key/value pairs to pass as parameters into the template
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--list--template))
 
 <a id="nestedblock--spec--generator--merge--generator--merge--generator--list--template"></a>
@@ -15209,6 +15441,7 @@ Optional:
 
 Optional:
 
+- `azure_devops` (Block List, Max: 1) Fetch pull requests from an Azure DevOps repository. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--azure_devops))
 - `bitbucket_server` (Block List, Max: 1) Fetch pull requests from a repo hosted on a Bitbucket Server. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--bitbucket_server))
 - `filter` (Block List) Filters allow selecting which pull requests to generate for. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--filter))
 - `gitea` (Block List, Max: 1) Specify the repository from which to fetch the Gitea Pull requests. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--gitea))
@@ -15216,6 +15449,31 @@ Optional:
 - `gitlab` (Block List, Max: 1) Specify the project from which to fetch the GitLab merge requests. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--gitlab))
 - `requeue_after_seconds` (String) How often to check for changes (in seconds). Default: 30min.
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--template))
+
+<a id="nestedblock--spec--generator--merge--generator--merge--generator--pull_request--azure_devops"></a>
+### Nested Schema for `spec.generator.merge.generator.merge.generator.pull_request.azure_devops`
+
+Required:
+
+- `organization` (String) Azure DevOps org to scan. Required.
+- `project` (String) Azure DevOps project name to scan. Required.
+- `repo` (String) Azure DevOps repo name to scan. Required.
+
+Optional:
+
+- `api` (String) The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.
+- `labels` (List of String) Labels is used to filter the PRs that you want to target.
+- `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--azure_devops--token_ref))
+
+<a id="nestedblock--spec--generator--merge--generator--merge--generator--pull_request--azure_devops--token_ref"></a>
+### Nested Schema for `spec.generator.merge.generator.merge.generator.pull_request.azure_devops.token_ref`
+
+Required:
+
+- `key` (String) Key containing information in Kubernetes `Secret`.
+- `secret_name` (String) Name of Kubernetes `Secret`.
+
+
 
 <a id="nestedblock--spec--generator--merge--generator--merge--generator--pull_request--bitbucket_server"></a>
 ### Nested Schema for `spec.generator.merge.generator.merge.generator.pull_request.bitbucket_server`
@@ -15316,9 +15574,20 @@ Required:
 Optional:
 
 - `api` (String) The GitLab API URL to talk to. If blank, uses https://gitlab.com/.
+- `ca_ref` (Block List, Max: 1) Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--gitlab--ca_ref))
+- `insecure` (Boolean) A flag for checking the validity of the SCM's certificates.
 - `labels` (List of String) Labels is used to filter the PRs that you want to target.
 - `pull_request_state` (String) additional MRs filter to get only those with a certain state. Default:  "" (all states).
 - `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--merge--generator--pull_request--gitlab--token_ref))
+
+<a id="nestedblock--spec--generator--merge--generator--merge--generator--pull_request--gitlab--ca_ref"></a>
+### Nested Schema for `spec.generator.merge.generator.merge.generator.pull_request.gitlab.ca_ref`
+
+Required:
+
+- `config_map_name` (String) Name of the ConfigMap.
+- `key` (String) Key containing information in trusted CA certs.
+
 
 <a id="nestedblock--spec--generator--merge--generator--merge--generator--pull_request--gitlab--token_ref"></a>
 ### Nested Schema for `spec.generator.merge.generator.merge.generator.pull_request.gitlab.token_ref`
@@ -16644,6 +16913,7 @@ Optional:
 
 Optional:
 
+- `azure_devops` (Block List, Max: 1) Fetch pull requests from an Azure DevOps repository. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--azure_devops))
 - `bitbucket_server` (Block List, Max: 1) Fetch pull requests from a repo hosted on a Bitbucket Server. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--bitbucket_server))
 - `filter` (Block List) Filters allow selecting which pull requests to generate for. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--filter))
 - `gitea` (Block List, Max: 1) Specify the repository from which to fetch the Gitea Pull requests. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--gitea))
@@ -16651,6 +16921,31 @@ Optional:
 - `gitlab` (Block List, Max: 1) Specify the project from which to fetch the GitLab merge requests. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--gitlab))
 - `requeue_after_seconds` (String) How often to check for changes (in seconds). Default: 30min.
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--template))
+
+<a id="nestedblock--spec--generator--merge--generator--pull_request--azure_devops"></a>
+### Nested Schema for `spec.generator.merge.generator.pull_request.azure_devops`
+
+Required:
+
+- `organization` (String) Azure DevOps org to scan. Required.
+- `project` (String) Azure DevOps project name to scan. Required.
+- `repo` (String) Azure DevOps repo name to scan. Required.
+
+Optional:
+
+- `api` (String) The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.
+- `labels` (List of String) Labels is used to filter the PRs that you want to target.
+- `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--azure_devops--token_ref))
+
+<a id="nestedblock--spec--generator--merge--generator--pull_request--azure_devops--token_ref"></a>
+### Nested Schema for `spec.generator.merge.generator.pull_request.azure_devops.token_ref`
+
+Required:
+
+- `key` (String) Key containing information in Kubernetes `Secret`.
+- `secret_name` (String) Name of Kubernetes `Secret`.
+
+
 
 <a id="nestedblock--spec--generator--merge--generator--pull_request--bitbucket_server"></a>
 ### Nested Schema for `spec.generator.merge.generator.pull_request.bitbucket_server`
@@ -16751,9 +17046,20 @@ Required:
 Optional:
 
 - `api` (String) The GitLab API URL to talk to. If blank, uses https://gitlab.com/.
+- `ca_ref` (Block List, Max: 1) Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--gitlab--ca_ref))
+- `insecure` (Boolean) A flag for checking the validity of the SCM's certificates.
 - `labels` (List of String) Labels is used to filter the PRs that you want to target.
 - `pull_request_state` (String) additional MRs filter to get only those with a certain state. Default:  "" (all states).
 - `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--merge--generator--pull_request--gitlab--token_ref))
+
+<a id="nestedblock--spec--generator--merge--generator--pull_request--gitlab--ca_ref"></a>
+### Nested Schema for `spec.generator.merge.generator.pull_request.gitlab.ca_ref`
+
+Required:
+
+- `config_map_name` (String) Name of the ConfigMap.
+- `key` (String) Key containing information in trusted CA certs.
+
 
 <a id="nestedblock--spec--generator--merge--generator--pull_request--gitlab--token_ref"></a>
 ### Nested Schema for `spec.generator.merge.generator.pull_request.gitlab.token_ref`
@@ -18079,6 +18385,7 @@ Optional:
 
 Optional:
 
+- `azure_devops` (Block List, Max: 1) Fetch pull requests from an Azure DevOps repository. (see [below for nested schema](#nestedblock--spec--generator--pull_request--azure_devops))
 - `bitbucket_server` (Block List, Max: 1) Fetch pull requests from a repo hosted on a Bitbucket Server. (see [below for nested schema](#nestedblock--spec--generator--pull_request--bitbucket_server))
 - `filter` (Block List) Filters allow selecting which pull requests to generate for. (see [below for nested schema](#nestedblock--spec--generator--pull_request--filter))
 - `gitea` (Block List, Max: 1) Specify the repository from which to fetch the Gitea Pull requests. (see [below for nested schema](#nestedblock--spec--generator--pull_request--gitea))
@@ -18086,6 +18393,31 @@ Optional:
 - `gitlab` (Block List, Max: 1) Specify the project from which to fetch the GitLab merge requests. (see [below for nested schema](#nestedblock--spec--generator--pull_request--gitlab))
 - `requeue_after_seconds` (String) How often to check for changes (in seconds). Default: 30min.
 - `template` (Block List, Max: 1) Generator template. Used to override the values of the spec-level template. (see [below for nested schema](#nestedblock--spec--generator--pull_request--template))
+
+<a id="nestedblock--spec--generator--pull_request--azure_devops"></a>
+### Nested Schema for `spec.generator.pull_request.azure_devops`
+
+Required:
+
+- `organization` (String) Azure DevOps org to scan. Required.
+- `project` (String) Azure DevOps project name to scan. Required.
+- `repo` (String) Azure DevOps repo name to scan. Required.
+
+Optional:
+
+- `api` (String) The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.
+- `labels` (List of String) Labels is used to filter the PRs that you want to target.
+- `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--pull_request--azure_devops--token_ref))
+
+<a id="nestedblock--spec--generator--pull_request--azure_devops--token_ref"></a>
+### Nested Schema for `spec.generator.pull_request.azure_devops.token_ref`
+
+Required:
+
+- `key` (String) Key containing information in Kubernetes `Secret`.
+- `secret_name` (String) Name of Kubernetes `Secret`.
+
+
 
 <a id="nestedblock--spec--generator--pull_request--bitbucket_server"></a>
 ### Nested Schema for `spec.generator.pull_request.bitbucket_server`
@@ -18186,9 +18518,20 @@ Required:
 Optional:
 
 - `api` (String) The GitLab API URL to talk to. If blank, uses https://gitlab.com/.
+- `ca_ref` (Block List, Max: 1) Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate. (see [below for nested schema](#nestedblock--spec--generator--pull_request--gitlab--ca_ref))
+- `insecure` (Boolean) A flag for checking the validity of the SCM's certificates.
 - `labels` (List of String) Labels is used to filter the PRs that you want to target.
 - `pull_request_state` (String) additional MRs filter to get only those with a certain state. Default:  "" (all states).
 - `token_ref` (Block List, Max: 1) Authentication token reference. (see [below for nested schema](#nestedblock--spec--generator--pull_request--gitlab--token_ref))
+
+<a id="nestedblock--spec--generator--pull_request--gitlab--ca_ref"></a>
+### Nested Schema for `spec.generator.pull_request.gitlab.ca_ref`
+
+Required:
+
+- `config_map_name` (String) Name of the ConfigMap.
+- `key` (String) Key containing information in trusted CA certs.
+
 
 <a id="nestedblock--spec--generator--pull_request--gitlab--token_ref"></a>
 ### Nested Schema for `spec.generator.pull_request.gitlab.token_ref`

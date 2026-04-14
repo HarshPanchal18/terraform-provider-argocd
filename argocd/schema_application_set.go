@@ -447,11 +447,16 @@ func applicationSetListGeneratorSchemaV0() *schema.Schema {
 				"elements": {
 					Type:        schema.TypeList,
 					Description: "List of key/value pairs to pass as parameters into the template",
-					Required:    true,
+					Optional:    true,
 					Elem: &schema.Schema{
 						Type: schema.TypeMap,
 						Elem: &schema.Schema{Type: schema.TypeString},
 					},
+				},
+				"elements_yaml": {
+					Type:        schema.TypeString,
+					Description: "YAML string containing list of key/value pairs to pass as parameters into the template",
+					Optional:    true,
 				},
 				"template": {
 					Type:        schema.TypeList,
@@ -870,6 +875,49 @@ func applicationSetPullRequestGeneratorSchemaV0() *schema.Schema {
 						},
 					},
 				},
+				"azure_devops": {
+					Type:        schema.TypeList,
+					Description: "Fetch pull requests from an Azure DevOps repository.",
+					Optional:    true,
+					MaxItems:    1,
+					Elem: &schema.Resource{
+						Schema: map[string]*schema.Schema{
+							"api": {
+								Type:        schema.TypeString,
+								Description: "The Azure DevOps API URL to talk to. If blank, uses https://dev.azure.com/.",
+								Optional:    true,
+							},
+							"labels": {
+								Type:        schema.TypeList,
+								Description: "Labels is used to filter the PRs that you want to target.",
+								Optional:    true,
+								Elem:        &schema.Schema{Type: schema.TypeString},
+							},
+							"organization": {
+								Type:        schema.TypeString,
+								Description: "Azure DevOps org to scan. Required.",
+								Required:    true,
+							},
+							"project": {
+								Type:        schema.TypeString,
+								Description: "Azure DevOps project name to scan. Required.",
+								Required:    true,
+							},
+							"repo": {
+								Type:        schema.TypeString,
+								Description: "Azure DevOps repo name to scan. Required.",
+								Required:    true,
+							},
+							"token_ref": {
+								Type:        schema.TypeList,
+								Description: "Authentication token reference.",
+								Optional:    true,
+								MaxItems:    1,
+								Elem:        secretRefResource(),
+							},
+						},
+					},
+				},
 				"filter": {
 					Type:        schema.TypeList,
 					Description: "Filters allow selecting which pull requests to generate for.",
@@ -999,6 +1047,18 @@ func applicationSetPullRequestGeneratorSchemaV0() *schema.Schema {
 								MaxItems:    1,
 								Elem:        secretRefResource(),
 							},
+							"insecure": {
+								Type:        schema.TypeBool,
+								Description: "A flag for checking the validity of the SCM's certificates.",
+								Optional:    true,
+							},
+							"ca_ref": {
+								Type:        schema.TypeList,
+								Description: "Reference to a ConfigMap key containing trusted CA certificates for verifying the SCM server's TLS certificate.",
+								Optional:    true,
+								MaxItems:    1,
+								Elem:        configMapRefResource(),
+							},
 						},
 					},
 				},
@@ -1078,6 +1138,23 @@ func secretRefResource() *schema.Resource {
 			"secret_name": {
 				Type:        schema.TypeString,
 				Description: "Name of Kubernetes `Secret`.",
+				Required:    true,
+			},
+		},
+	}
+}
+
+func configMapRefResource() *schema.Resource {
+	return &schema.Resource{
+		Schema: map[string]*schema.Schema{
+			"key": {
+				Type:        schema.TypeString,
+				Description: "Key containing information in trusted CA certs.",
+				Required:    true,
+			},
+			"config_map_name": {
+				Type:        schema.TypeString,
+				Description: "Name of the ConfigMap.",
 				Required:    true,
 			},
 		},

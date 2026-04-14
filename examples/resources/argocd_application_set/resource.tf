@@ -201,6 +201,50 @@ resource "argocd_application_set" "list" {
   }
 }
 
+# List Generator with elements_yaml
+resource "argocd_application_set" "list_elements_yaml" {
+  metadata {
+    name = "list-elements-yaml"
+  }
+
+  spec {
+    generator {
+      list {
+        elements_yaml = <<-EOT
+          - cluster: engineering-dev
+            url: https://kubernetes.default.svc
+            environment: development
+          - cluster: engineering-prod
+            url: https://kubernetes.default.svc
+            environment: production
+            foo: bar
+        EOT
+      }
+    }
+
+    template {
+      metadata {
+        name = "{{cluster}}-guestbook"
+      }
+
+      spec {
+        project = "my-project"
+
+        source {
+          repo_url        = "https://github.com/argoproj/argo-cd.git"
+          target_revision = "HEAD"
+          path            = "applicationset/examples/list-generator/guestbook/{{cluster}}"
+        }
+
+        destination {
+          server    = "{{url}}"
+          namespace = "guestbook"
+        }
+      }
+    }
+  }
+}
+
 # Matrix Generator
 resource "argocd_application_set" "matrix" {
   metadata {
@@ -363,6 +407,60 @@ resource "argocd_application_set" "pr_github" {
           labels = [
             "preview"
           ]
+        }
+      }
+    }
+
+    template {
+      metadata {
+        name = "myapp-{{branch}}-{{number}}"
+      }
+
+      spec {
+        project = "default"
+
+        source {
+          repo_url        = "https://github.com/myorg/myrepo.git"
+          path            = "kubernetes/"
+          target_revision = "{{head_sha}}"
+
+          helm {
+            parameter {
+              name  = "image.tag"
+              value = "pull-{{head_sha}}"
+            }
+          }
+        }
+
+        destination {
+          server    = "https://kubernetes.default.svc"
+          namespace = "default"
+        }
+      }
+    }
+  }
+}
+
+# Pull Request Generator - Azure DevOps
+resource "argocd_application_set" "pr_azure_devops" {
+  metadata {
+    name = "pr-azure-devops"
+  }
+
+  spec {
+    generator {
+      pull_request {
+        azure_devops {
+          api          = "https://dev.azure.com"
+          organization = "myorg"
+          project      = "myproject"
+          repo         = "myrepository"
+          labels       = ["preview"]
+
+          token_ref {
+            secret_name = "azure-devops-token"
+            key         = "token"
+          }
         }
       }
     }

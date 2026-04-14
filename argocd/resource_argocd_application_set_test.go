@@ -234,6 +234,35 @@ func TestAccArgoCDApplicationSet_list(t *testing.T) {
 	})
 }
 
+func TestAccArgoCDApplicationSet_listElementsYaml(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t); testAccPreCheckFeatureSupported(t, features.ApplicationSet) },
+		ProviderFactories: testAccProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccArgoCDApplicationSet_listElementsYaml(),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet(
+						"argocd_application_set.list_elements_yaml",
+						"metadata.0.uid",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_application_set.list_elements_yaml",
+						"spec.0.generator.0.list.0.elements_yaml",
+						"- cluster: engineering-dev\n  url: https://kubernetes.default.svc\n  environment: development\n- cluster: engineering-prod\n  url: https://kubernetes.default.svc\n  environment: production\n  foo: bar\n",
+					),
+				),
+			},
+			{
+				ResourceName:            "argocd_application_set.list_elements_yaml",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"metadata.0.resource_version"},
+			},
+		},
+	})
+}
+
 func TestAccArgoCDApplicationSet_matrix(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t); testAccPreCheckFeatureSupported(t, features.ApplicationSet) },
@@ -832,6 +861,79 @@ func TestAccArgoCDApplicationSet_pullRequestGitlab(t *testing.T) {
 	})
 }
 
+func TestAccArgoCDApplicationSet_pullRequestGitlabInsecureAndCARef(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t); testAccPreCheckFeatureSupported(t, features.ApplicationSet) },
+		ProviderFactories: testAccProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccArgoCDApplicationSet_pullRequestGitlabInsecureAndCARef(),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet(
+						"argocd_application_set.pr_gitlab_insecure",
+						"metadata.0.uid",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_application_set.pr_gitlab_insecure",
+						"spec.0.generator.0.pull_request.0.gitlab.0.project",
+						"myproject",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_application_set.pr_gitlab_insecure",
+						"spec.0.generator.0.pull_request.0.gitlab.0.insecure",
+						"true",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_application_set.pr_gitlab_insecure",
+						"spec.0.generator.0.pull_request.0.gitlab.0.ca_ref.0.key",
+						"ca.crt",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_application_set.pr_gitlab_insecure",
+						"spec.0.generator.0.pull_request.0.gitlab.0.ca_ref.0.config_map_name",
+						"gitlab-ca-cert",
+					),
+				),
+			},
+			{
+				ResourceName:            "argocd_application_set.pr_gitlab_insecure",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"metadata.0.resource_version", "spec.0.template.0.spec.0.source.0.helm.0.parameter.0.force_string"},
+			},
+		},
+	})
+}
+
+func TestAccArgoCDApplicationSet_pullRequestAzureDevOps(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t); testAccPreCheckFeatureSupported(t, features.ApplicationSet) },
+		ProviderFactories: testAccProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccArgoCDApplicationSet_pullRequestAzureDevOps(),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet(
+						"argocd_application_set.pr_azure_devops",
+						"metadata.0.uid",
+					),
+					resource.TestCheckResourceAttr(
+						"argocd_application_set.pr_azure_devops",
+						"spec.0.generator.0.pull_request.0.azure_devops.0.organization",
+						"myorg",
+					),
+				),
+			},
+			{
+				ResourceName:            "argocd_application_set.pr_azure_devops",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"metadata.0.resource_version", "spec.0.template.0.spec.0.source.0.helm.0.parameter.0.force_string"},
+			},
+		},
+	})
+}
+
 func TestAccArgoCDApplicationSet_mergeInvalid(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t); testAccPreCheckFeatureSupported(t, features.ApplicationSet) },
@@ -1397,6 +1499,53 @@ resource "argocd_application_set" "list" {
 						url     = "https://kubernetes.default.svc"
 					}
 				]
+			}
+		}
+
+		template {
+			metadata {
+				name = "{{cluster}}-guestbook"
+			}
+
+			spec {
+				project = "default"
+
+				source {
+					repo_url        = "https://github.com/argoproj/argo-cd.git"
+					target_revision = "HEAD"
+					path            = "applicationset/examples/list-generator/guestbook/{{cluster}}"
+				}
+
+				destination {
+					server    = "{{url}}"
+					namespace = "guestbook"
+				}
+			}
+		}
+	}
+}`
+}
+
+func testAccArgoCDApplicationSet_listElementsYaml() string {
+	return `
+resource "argocd_application_set" "list_elements_yaml" {
+	metadata {
+		name = "list-elements-yaml"
+	}
+
+	spec {
+		generator {
+			list {
+				elements = []
+				elements_yaml = <<-EOT
+					- cluster: engineering-dev
+					  url: https://kubernetes.default.svc
+					  environment: development
+					- cluster: engineering-prod
+					  url: https://kubernetes.default.svc
+					  environment: production
+					  foo: bar
+				EOT
 			}
 		}
 
@@ -2915,6 +3064,126 @@ resource "argocd_application_set" "pr_gitlab" {
 					labels = [
 						"preview"
 					]
+				}
+			}
+		}
+
+		template {
+			metadata {
+				name = "myapp-{{branch}}-{{number}}"
+			}
+
+			spec {
+				project = "default"
+
+				source {
+					repo_url        = "https://github.com/myorg/myrepo.git"
+					path            = "kubernetes/"
+					target_revision = "{{head_sha}}"
+
+					helm {
+						parameter {
+							name  = "image.tag"
+							value = "pull-{{head_sha}}"
+						}
+					}
+				}
+
+				destination {
+					server    = "https://kubernetes.default.svc"
+					namespace = "default"
+				}
+			}
+		}
+	}
+}`
+}
+
+func testAccArgoCDApplicationSet_pullRequestGitlabInsecureAndCARef() string {
+	return `
+resource "argocd_application_set" "pr_gitlab_insecure" {
+	metadata {
+		name = "pr-gitlab-insecure"
+	}
+
+	spec {
+		generator {
+			pull_request {
+				gitlab {
+					api                = "https://git.example.com/"
+					project            = "myproject"
+					pull_request_state = "opened"
+					insecure           = true
+
+					token_ref {
+						secret_name = "gitlab-token"
+						key         = "token"
+					}
+
+					ca_ref {
+						config_map_name = "gitlab-ca-cert"
+						key             = "ca.crt"
+					}
+
+					labels = [
+						"preview"
+					]
+				}
+			}
+		}
+
+		template {
+			metadata {
+				name = "myapp-{{branch}}-{{number}}"
+			}
+
+			spec {
+				project = "default"
+
+				source {
+					repo_url        = "https://github.com/myorg/myrepo.git"
+					path            = "kubernetes/"
+					target_revision = "{{head_sha}}"
+
+					helm {
+						parameter {
+							name  = "image.tag"
+							value = "pull-{{head_sha}}"
+						}
+					}
+				}
+
+				destination {
+					server    = "https://kubernetes.default.svc"
+					namespace = "default"
+				}
+			}
+		}
+	}
+}`
+}
+
+func testAccArgoCDApplicationSet_pullRequestAzureDevOps() string {
+	return `
+resource "argocd_application_set" "pr_azure_devops" {
+	metadata {
+		name = "pr-azure-devops"
+	}
+
+	spec {
+		generator {
+			pull_request {
+				azure_devops {
+					api          = "https://dev.azure.com"
+					organization = "myorg"
+					project      = "myproject"
+					repo         = "myrepository"
+					labels       = ["preview"]
+
+					token_ref {
+						secret_name = "azure-devops-token"
+						key         = "token"
+					}
 				}
 			}
 		}

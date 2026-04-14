@@ -264,6 +264,120 @@ resource "argocd_application_set" "matrix" {
   }
 }
 
+
+# List Generator with elements_yaml
+resource "argocd_application_set" "list_elements_yaml" {
+  metadata {
+    name = "list-elements-yaml"
+  }
+
+  spec {
+    generator {
+      list {
+        elements_yaml = <<-EOT
+          - cluster: engineering-dev
+            url: https://kubernetes.default.svc
+            environment: development
+          - cluster: engineering-prod
+            url: https://kubernetes.default.svc
+            environment: production
+            foo: bar
+        EOT
+      }
+    }
+
+    template {
+      metadata {
+        name = "{{cluster}}-guestbook"
+      }
+
+      spec {
+        project = "default"
+
+        source {
+          repo_url        = "https://github.com/argoproj/argo-cd.git"
+          target_revision = "HEAD"
+          path            = "applicationset/examples/list-generator/guestbook/{{cluster}}"
+        }
+
+        destination {
+          server    = "{{url}}"
+          namespace = "guestbook"
+        }
+      }
+    }
+  }
+}
+
+# List Generator with dynamic elements_yaml using Go templating
+resource "argocd_application_set" "list_elements_yaml_dynamic" {
+  metadata {
+    name = "list-elements-yaml-dynamic"
+  }
+
+  spec {
+    go_template         = true
+    go_template_options = ["missingkey=error"]
+
+    generator {
+      matrix {
+        generator {
+          git {
+            repo_url = "https://github.com/argoproj/argo-cd.git"
+            revision = "HEAD"
+
+            file {
+              path = "applicationset/examples/list-generator/list-elementsYaml-example.yaml"
+            }
+          }
+        }
+
+        generator {
+          list {
+            elements_yaml = <<-EOT
+              {{ .key.components | toJson }}
+            EOT
+          }
+        }
+      }
+    }
+
+    template {
+      metadata {
+        name = "{{.name}}"
+      }
+
+      spec {
+        project = "default"
+
+        sync_policy {
+          automated {
+            self_heal = true
+          }
+          sync_options = ["CreateNamespace=true"]
+        }
+
+        source {
+          chart           = "{{.chart}}"
+          repo_url        = "{{.repoUrl}}"
+          target_revision = "{{.version}}"
+          helm {
+            release_name = "{{.releaseName}}"
+          }
+        }
+
+        destination {
+          server    = "https://kubernetes.default.svc"
+          namespace = "{{.namespace}}"
+        }
+      }
+    }
+  }
+}
+
+
+
+
 resource "argocd_application_set" "merge" {
   metadata {
     name = "merge"
@@ -347,9 +461,9 @@ resource "argocd_application_set" "merge" {
   }
 }
 
-resource "argocd_application_set" "pull_request" {
+resource "argocd_application_set" "pull_request_github" {
   metadata {
-    name = "pull-request"
+    name = "pull-request-github"
   }
 
   spec {
@@ -402,6 +516,65 @@ resource "argocd_application_set" "pull_request" {
     }
   }
 }
+
+
+resource "argocd_application_set" "pull_request_azure_devops" {
+  metadata {
+    name = "pull-request-azure-devops"
+  }
+
+  spec {
+    generator {
+      pull_request {
+        azure_devops {
+          organization = "myorg"
+          project      = "myproject"
+          repo         = "myrepo"
+          api          = "https://dev.azure.com/"
+
+          token_ref {
+            secret_name = "pat-token"
+            key         = "token"
+          }
+
+          labels = [
+            "preview"
+          ]
+        }
+      }
+    }
+
+    template {
+      metadata {
+        name = "appset-opull-request-{{branch}}-{{number}}"
+      }
+
+      spec {
+        project = "default"
+
+        source {
+          repo_url        = "https://github.com/myorg/myrepo.git"
+          path            = "kubernetes/"
+          target_revision = "{{head_sha}}"
+
+          helm {
+            parameter {
+              name  = "image.tag"
+              value = "pull-{{head_sha}}"
+            }
+          }
+        }
+
+        destination {
+          server    = "https://kubernetes.default.svc"
+          namespace = "default"
+        }
+      }
+    }
+  }
+}
+
+
 
 resource "argocd_application_set" "scm_provider" {
   metadata {
